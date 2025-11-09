@@ -1,0 +1,2 @@
+../Core/Src/loopback.c:83:9:loopback_tcpc	15
+../Core/Src/loopback.c:172:9:loopback_udps	9
