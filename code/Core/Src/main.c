@@ -213,7 +213,7 @@ void send_auth_required(uint8_t socket) {
         "HTTP/1.1 401 Unauthorized\r\n"
         "WWW-Authenticate: Basic realm=\"LAN Control Console\"\r\n"
         "Content-Type: text/html\r\n"
-        "Connection: close\r\n"
+  //      "Connection: close\r\n"
         "Content-Length: 0\r\n\r\n";
 
     send(socket, (uint8_t*)auth_page, strlen(auth_page));
@@ -1245,15 +1245,19 @@ int main(void) {
 				http_request[total_len] = '\0';
 
 #ifdef AUTH_ON
-				if (strstr((char*) http_request, "GET /favicon.ico") == NULL) {
-					if (!check_authentication(http_request)) {
-						send_auth_required(HTTP_SOCKET);
-						HAL_Delay(10);
-						disconnect(HTTP_SOCKET);
-						socket_active_since = 0;
-						continue;
-					}
-				}
+if (strstr((char*) http_request, "GET /favicon.ico") == NULL) {
+    if (!check_authentication(http_request)) {
+        send_auth_required(HTTP_SOCKET);
+        uint32_t start = HAL_GetTick();
+        while (getSn_TX_RD(HTTP_SOCKET) != getSn_TX_WR(HTTP_SOCKET)) {
+            if (HAL_GetTick() - start > 500 || getSn_SR(HTTP_SOCKET) != SOCK_ESTABLISHED) {
+                break;
+            }
+            HAL_Delay(1);
+        }
+        goto skip_page_serve_and_close;
+    }
+}
 #endif
 
 				if (strstr((char*) http_request, "GET /mode/toggle")) {
@@ -1338,6 +1342,7 @@ int main(void) {
 				}
 				HAL_Delay(1);
 			}
+skip_page_serve_and_close:
 			break;
 		}
 

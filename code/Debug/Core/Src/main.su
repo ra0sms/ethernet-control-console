@@ -54,8 +54,8 @@
 ../Core/Src/main.c:1026:6:ResetW5500	16	static
 ../Core/Src/main.c:1047:6:CheckW5500	16	static
 ../Core/Src/main.c:1133:5:main	1136	static
-../Core/Src/main.c:1381:6:SystemClock_Config	88	static
-../Core/Src/main.c:1431:13:MX_SPI1_Init	8	static
-../Core/Src/main.c:1469:13:MX_TIM11_Init	32	static
-../Core/Src/main.c:1528:13:MX_GPIO_Init	48	static
-../Core/Src/main.c:1578:6:Error_Handler	4	static,ignoring_inline_asm
+../Core/Src/main.c:1386:6:SystemClock_Config	88	static
+../Core/Src/main.c:1436:13:MX_SPI1_Init	8	static
+../Core/Src/main.c:1474:13:MX_TIM11_Init	32	static
+../Core/Src/main.c:1533:13:MX_GPIO_Init	48	static
+../Core/Src/main.c:1583:6:Error_Handler	4	static,ignoring_inline_asm
