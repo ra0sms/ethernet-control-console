@@ -1,6 +1,3 @@
-../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_tim.h:3185:22:LL_TIM_ClearFlag_UPDATE	1
-../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_tim.h:3196:26:LL_TIM_IsActiveFlag_UPDATE	2
-../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_gpio.h:939:22:LL_GPIO_TogglePin	1
 ../Core/Src/stm32f4xx_it.c:70:6:NMI_Handler	1
 ../Core/Src/stm32f4xx_it.c:86:6:HardFault_Handler	1
 ../Core/Src/stm32f4xx_it.c:101:6:MemManage_Handler	1

@@ -53,7 +53,7 @@ extern volatile uint8_t usb_rx_error;
 uint8_t gpio_states[8] = {0};
 char last_status_message[128] = {0};
 uint8_t operation_mode = 0; // 0 = toggle, 1 = switch
-char mode_names[2][16] = {"Toggle Mode", "Switch Mode"};
+char mode_names[3][16] = {"Toggle Mode", "Switch Mode", "Hi-Z Mode"};
 
 int ParseIPAddress(const char* ip_str, uint8_t* ip_array);
 int ParseMACAddress(const char* mac_str, uint8_t* mac_array);
@@ -71,8 +71,8 @@ typedef struct {
     uint32_t magic;
     wiz_NetInfo netinfo;
     char button_names[8][16];
-    char http_user[32];   // ← добавлено
-    char http_pass[32];   // ← добавлено
+    char http_user[32];
+    char http_pass[32];
     uint32_t crc;
 } EEPROM_Data;
 #pragma pack(pop)
@@ -398,30 +398,69 @@ void send_web_page(uint8_t socket, const char *base_page, uint8_t gpio_states[],
 {
     char dynamic_content[2048];
     char temp[256];
+
     strcpy(dynamic_content, base_page);
+
+    // Блок выбора режима
     strcat(dynamic_content, "<div class='mode-selector'>");
 
+    // Кнопка Toggle (Mode 0)
     if (mode == 0) {
         strcat(dynamic_content, "<button class='mode-btn mode-active' onclick='location.href=\"/mode/toggle\"'>Toggle Mode</button>");
         strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/switch\"'>Switch Mode</button>");
-    } else {
+        strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/hiz\"'>Hi-Z Mode</button>");
+    }
+    // Кнопка Switch (Mode 1)
+    else if (mode == 1) {
         strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/toggle\"'>Toggle Mode</button>");
         strcat(dynamic_content, "<button class='mode-btn mode-active' onclick='location.href=\"/mode/switch\"'>Switch Mode</button>");
+        strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/hiz\"'>Hi-Z Mode</button>");
+    }
+    // Кнопка Hi-Z (Mode 2)
+    else {
+        strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/toggle\"'>Toggle Mode</button>");
+        strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/switch\"'>Switch Mode</button>");
+        strcat(dynamic_content, "<button class='mode-btn mode-active' onclick='location.href=\"/mode/hiz\"'>Hi-Z Mode</button>");
     }
 
     strcat(dynamic_content, "</div><div class='btn-grid'>");
+
+    // Цикл отрисовки кнопок
     for (int i = 0; i < 8; i++) {
+        // В режиме Hi-Z отображаем только первые 4 выхода (0-3)
+        if (mode == 2 && i >= 4) {
+            continue;
+        }
+
         if (gpio_states[i] == 1) {
-            snprintf(temp, sizeof(temp),
-                "<a href='/gpio%d/off' class='btn btn-on'>%s ON</a>",
-                i, button_names[i]);
+            if (mode == 2) {
+                // В режиме Hi-Z включенное состояние - КРАСНЫЙ (btn-off класс используется как красный в CSS, либо создадим специальный)
+                // В вашем CSS .btn-off имеет красный фон. Используем его для состояния ON в режиме Hi-Z.
+                snprintf(temp, sizeof(temp),
+                    "<a href='/gpio%d/off' class='btn btn-off'>%s ON</a>", // Ссылка на /off используется как триггер выключения
+                    i, button_names[i]);
+            } else {
+                // Стандартное поведение: Зеленый при включении
+                snprintf(temp, sizeof(temp),
+                    "<a href='/gpio%d/off' class='btn btn-on'>%s ON</a>",
+                    i, button_names[i]);
+            }
         } else {
-            snprintf(temp, sizeof(temp),
-                "<a href='/gpio%d/on' class='btn btn-off'>%s OFF</a>",
-                i, button_names[i]);
+            if (mode == 2) {
+
+                snprintf(temp, sizeof(temp),
+                    "<a href='/gpio%d/on' class='btn' style='background:#6c757d;color:white;'>%s OFF</a>",
+                    i, button_names[i]);
+            } else {
+                // Стандартное поведение: Красный при выключении
+                snprintf(temp, sizeof(temp),
+                    "<a href='/gpio%d/on' class='btn btn-off'>%s OFF</a>",
+                    i, button_names[i]);
+            }
         }
         strcat(dynamic_content, temp);
     }
+
     strcat(dynamic_content, "</div><div class='status'>");
     if (strlen(last_status_message) > 0) {
         strcat(dynamic_content, last_status_message);
@@ -435,11 +474,11 @@ void send_web_page(uint8_t socket, const char *base_page, uint8_t gpio_states[],
 
     char header[128];
     snprintf(header, sizeof(header),
-             "HTTP/1.1 200 OK\r\n"
-             "Content-Type: text/html\r\n"
-             "Connection: close\r\n"
-             "Content-Length: %d\r\n\r\n",
-             strlen(full_page));
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: text/html\r\n"
+        "Connection: close\r\n"
+        "Content-Length: %d\r\n\r\n",
+        strlen(full_page));
 
     send(socket, (uint8_t*)header, strlen(header));
     send(socket, (uint8_t*)full_page, strlen(full_page));
@@ -1204,7 +1243,7 @@ int main(void) {
 				&& socket_active_since != 0) {
 			if (now - socket_active_since > 10000) {
 				printf("Socket stuck >10s, force closing socket %d\r\n",
-						HTTP_SOCKET);
+				HTTP_SOCKET);
 				close(HTTP_SOCKET);
 				socket_active_since = 0;
 			}
@@ -1245,79 +1284,146 @@ int main(void) {
 				http_request[total_len] = '\0';
 
 #ifdef AUTH_ON
-if (strstr((char*) http_request, "GET /favicon.ico") == NULL) {
-    if (!check_authentication(http_request)) {
-        send_auth_required(HTTP_SOCKET);
-        uint32_t start = HAL_GetTick();
-        while (getSn_TX_RD(HTTP_SOCKET) != getSn_TX_WR(HTTP_SOCKET)) {
-            if (HAL_GetTick() - start > 500 || getSn_SR(HTTP_SOCKET) != SOCK_ESTABLISHED) {
-                break;
-            }
-            HAL_Delay(1);
-        }
-        goto skip_page_serve_and_close;
-    }
-}
+				if (strstr((char*) http_request, "GET /favicon.ico") == NULL) {
+					if (!check_authentication(http_request)) {
+						send_auth_required(HTTP_SOCKET);
+						uint32_t start = HAL_GetTick();
+						while (getSn_TX_RD(HTTP_SOCKET)
+								!= getSn_TX_WR(HTTP_SOCKET)) {
+							if (HAL_GetTick() - start
+									> 500|| getSn_SR(HTTP_SOCKET) != SOCK_ESTABLISHED) {
+								break;
+							}
+							HAL_Delay(1);
+						}
+						goto skip_page_serve_and_close;
+					}
+				}
 #endif
 
 				if (strstr((char*) http_request, "GET /mode/toggle")) {
-					operation_mode = 0;
-					snprintf(last_status_message, sizeof(last_status_message),
-							"Toggle mode activated");
-					printf("Switch to Toggle mode\r\n");
+				    operation_mode = 0;
+				    snprintf(last_status_message, sizeof(last_status_message), "Toggle mode activated");
+				    printf("Switch to Toggle mode\r\n");
 				} else if (strstr((char*) http_request, "GET /mode/switch")) {
-					operation_mode = 1;
-					snprintf(last_status_message, sizeof(last_status_message),
-							"Switch mode activated");
-					printf("Switch to Switch mode\r\n");
+				    operation_mode = 1;
+				    snprintf(last_status_message, sizeof(last_status_message), "Switch mode activated");
+				    printf("Switch to Switch mode\r\n");
+				} else if (strstr((char*) http_request, "GET /mode/hiz")) {
+				    operation_mode = 2;
+				    // При переходе в Hi-Z сбрасываем все выходы в 0 для безопасности
+				    for(int k=0; k<8; k++) { gpio_states[k] = 0; SetGPIO(k, 0); }
+				    snprintf(last_status_message, sizeof(last_status_message), "Hi-Z mode activated");
+				    printf("Switch to Hi-Z mode\r\n");
 				}
 
 				for (int i = 0; i < 8; i++) {
-					char on_pattern[20], off_pattern[20];
-					snprintf(on_pattern, sizeof(on_pattern), "GET /gpio%d/on",
-							i);
-					snprintf(off_pattern, sizeof(off_pattern),
-							"GET /gpio%d/off", i);
+				    char on_pattern[20], off_pattern[20];
+				    snprintf(on_pattern, sizeof(on_pattern), "GET /gpio%d/on", i);
+				    snprintf(off_pattern, sizeof(off_pattern), "GET /gpio%d/off", i);
 
-					if (strstr((char*) http_request, on_pattern)) {
-						if (operation_mode == 1) {
-							for (int j = 0; j < 8; j++) {
-								if (j != i) {
-									gpio_states[j] = 0;
-									SetGPIO(j, 0);
-								}
-							}
-							gpio_states[i] = 1;
-							SetGPIO(i, 1);
-							snprintf(last_status_message,
-									sizeof(last_status_message),
-									"GPIO %d turned ON (Switch mode)", i);
-							printf("GPIO %d turned ON in Switch mode\r\n", i);
-						} else {
-							gpio_states[i] = !gpio_states[i];
-							SetGPIO(i, gpio_states[i]);
-							if (gpio_states[i]) {
-								snprintf(last_status_message,
-										sizeof(last_status_message),
-										"GPIO %d turned ON (Toggle mode)", i);
-								printf("GPIO %d turned ON in Toggle mode\r\n",
-										i);
-							} else {
-								snprintf(last_status_message,
-										sizeof(last_status_message),
-										"GPIO %d turned OFF (Toggle mode)", i);
-								printf("GPIO %d turned OFF in Toggle mode\r\n",
-										i);
-							}
-						}
-					} else if (strstr((char*) http_request, off_pattern)) {
-						gpio_states[i] = 0;
-						SetGPIO(i, 0);
-						snprintf(last_status_message,
-								sizeof(last_status_message),
-								"GPIO %d turned OFF", i);
-						printf("GPIO %d turned OFF\r\n", i);
-					}
+				    // Проверка запроса на включение (или переключение)
+				    if (strstr((char*) http_request, on_pattern)) {
+
+				        if (operation_mode == 2) {
+				            // === ЛОГИКА HI-Z MODE (Binary Code) ===
+
+				            // Разрешаем работу только для первых 4 кнопок (0, 1, 2, 3)
+				            if (i >= 4) {
+				                continue; // Игнорируем нажатия на OUT5-OUT8
+				            }
+
+				            if (gpio_states[i] == 1) {
+				                // Кнопка уже была нажата (горит красным) -> Выключаем её (сброс в 00)
+				                gpio_states[i] = 0;
+				                // Физически ставим пины в состояние 00
+				                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+				                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
+
+				                // Примечание: SetGPIO(i, 0) можно не вызывать, так как мы напрямую управляем PIN_0 и PIN_1,
+				                // но для чистоты массива состояний остальных пинов можно оставить.
+
+				                snprintf(last_status_message, sizeof(last_status_message), "GPIO %d turned OFF (Hi-Z Reset)", i);
+				                printf("GPIO %d OFF (Hi-Z) -> PB0=0, PB1=0\r\n", i);
+				            } else {
+				                // Кнопка была выключена -> Включаем её и выключаем остальные
+				                // 1. Сбрасываем состояния всех 4 кнопок в массиве
+				                for (int j = 0; j < 4; j++) {
+				                    gpio_states[j] = 0;
+				                    // Опционально: SetGPIO(j, 0);
+				                }
+
+				                // 2. Включаем текущую кнопку в массиве (для подсветки)
+				                gpio_states[i] = 1;
+
+				                // 3. Устанавливаем двоичный код на GPIOB_PIN_0 и GPIOB_PIN_1
+				                switch(i) {
+				                    case 0: // OUT1 -> 00
+				                        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+				                        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
+				                        printf("OUT1 Selected -> PB0=0, PB1=0\r\n");
+				                        break;
+				                    case 1: // OUT2 -> 10 (PIN_0=1, PIN_1=0 по вашему ТЗ)
+				                        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
+				                        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
+				                        printf("OUT2 Selected -> PB0=1, PB1=0\r\n");
+				                        break;
+				                    case 2: // OUT3 -> 01 (PIN_0=0, PIN_1=1 по вашему ТЗ)
+				                        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+				                        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
+				                        printf("OUT3 Selected -> PB0=0, PB1=1\r\n");
+				                        break;
+				                    case 3: // OUT4 -> 11
+				                        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
+				                        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
+				                        printf("OUT4 Selected -> PB0=1, PB1=1\r\n");
+				                        break;
+				                }
+
+				                snprintf(last_status_message, sizeof(last_status_message), "GPIO %d turned ON (Hi-Z Code)", i);
+				            }
+
+				        } else if (operation_mode == 1) {
+				            // === ЛОГИКА SWITCH MODE (Стандартная) ===
+				            for (int j = 0; j < 8; j++) {
+				                if (j != i) {
+				                    gpio_states[j] = 0;
+				                    SetGPIO(j, 0);
+				                }
+				            }
+				            gpio_states[i] = 1;
+				            SetGPIO(i, 1);
+				            snprintf(last_status_message, sizeof(last_status_message), "GPIO %d turned ON (Switch mode)", i);
+				            printf("GPIO %d turned ON in Switch mode\r\n", i);
+
+				        } else {
+				            // === ЛОГИКА TOGGLE MODE (Стандартная) ===
+				            gpio_states[i] = !gpio_states[i];
+				            SetGPIO(i, gpio_states[i]);
+				            if (gpio_states[i]) {
+				                snprintf(last_status_message, sizeof(last_status_message), "GPIO %d turned ON (Toggle mode)", i);
+				                printf("GPIO %d turned ON in Toggle mode\r\n", i);
+				            } else {
+				                snprintf(last_status_message, sizeof(last_status_message), "GPIO %d turned OFF (Toggle mode)", i);
+				                printf("GPIO %d turned OFF in Toggle mode\r\n", i);
+				            }
+				        }
+
+				    } else if (strstr((char*) http_request, off_pattern)) {
+				        // Обработка явного запроса на выключение (если пользователь попал сюда напрямую)
+				        if (operation_mode == 2 && i < 4) {
+				             gpio_states[i] = 0;
+				             // Сброс кода в 00 при любом выключении в этом режиме
+				             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+				             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
+				             snprintf(last_status_message, sizeof(last_status_message), "GPIO %d turned OFF", i);
+				        } else {
+				            gpio_states[i] = 0;
+				            SetGPIO(i, 0);
+				            snprintf(last_status_message, sizeof(last_status_message), "GPIO %d turned OFF", i);
+				            printf("GPIO %d turned OFF\r\n", i);
+				        }
+				    }
 				}
 				send_web_page(HTTP_SOCKET, main_page, gpio_states, button_names,
 						operation_mode);
@@ -1342,8 +1448,7 @@ if (strstr((char*) http_request, "GET /favicon.ico") == NULL) {
 				}
 				HAL_Delay(1);
 			}
-skip_page_serve_and_close:
-			break;
+			skip_page_serve_and_close: break;
 		}
 
 		case SOCK_CLOSE_WAIT:
