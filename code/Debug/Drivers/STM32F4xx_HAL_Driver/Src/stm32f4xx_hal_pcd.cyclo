@@ -27,7 +27,7 @@
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:1961:19:HAL_PCD_EP_SetStall	5
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:2004:19:HAL_PCD_EP_ClrStall	4
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:2040:19:HAL_PCD_EP_Abort	2
-../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:1068:6:HAL_PCD_IRQHandler	80
+../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:1068:6:HAL_PCD_IRQHandler	79
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:2066:19:HAL_PCD_EP_Flush	3
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:2089:19:HAL_PCD_ActivateRemoteWakeup	1
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:2099:19:HAL_PCD_DeActivateRemoteWakeup	1

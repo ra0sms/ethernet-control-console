@@ -1,6 +1,6 @@
 ../Core/Src/dns.c:126:10:get16	0	static
 ../Core/Src/dns.c:135:11:put16	0	static
-../Core/Src/dns.c:153:5:parse_name	28	static
+../Core/Src/dns.c:153:5:parse_name	32	static
 ../Core/Src/dns.c:214:11:dns_question	32	static
 ../Core/Src/dns.c:240:11:dns_answer	48	static
 ../Core/Src/dns.c:335:8:parseDNSMSG	24	static

@@ -52,8 +52,10 @@ extern volatile uint8_t usb_rx_error;
 
 uint8_t gpio_states[8] = {0};
 char last_status_message[128] = {0};
-uint8_t operation_mode = 0; // 0 = toggle, 1 = switch
-char mode_names[3][16] = {"Toggle Mode", "Switch Mode", "Hi-Z Mode"};
+uint8_t operation_mode = 0;
+uint8_t dual_mode_group1 = 0;
+uint8_t dual_mode_group2 = 0;
+char mode_names[3][16] = {"Toggle Mode", "Switch Mode", "Dual Mode"};
 
 int ParseIPAddress(const char* ip_str, uint8_t* ip_array);
 int ParseMACAddress(const char* mac_str, uint8_t* mac_array);
@@ -394,74 +396,78 @@ void LoadDefaultSettings(void)
 }
 
 
-void send_web_page(uint8_t socket, const char *base_page, uint8_t gpio_states[], char button_names[][16], uint8_t mode)
+void send_web_page(uint8_t socket, const char *base_page, uint8_t gpio_states[],
+                   char button_names[][16], uint8_t main_mode,
+                   uint8_t dual_g1, uint8_t dual_g2)
 {
-    char dynamic_content[2048];
-    char temp[256];
+    char dynamic_content[3500];
+    char temp[300];
 
     strcpy(dynamic_content, base_page);
 
-    // Блок выбора режима
+    // === ГЛАВНЫЙ ВЫБОР РЕЖИМА ===
     strcat(dynamic_content, "<div class='mode-selector'>");
 
-    // Кнопка Toggle (Mode 0)
-    if (mode == 0) {
+    if (main_mode == 0) {
         strcat(dynamic_content, "<button class='mode-btn mode-active' onclick='location.href=\"/mode/toggle\"'>Toggle Mode</button>");
         strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/switch\"'>Switch Mode</button>");
-        strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/hiz\"'>Hi-Z Mode</button>");
-    }
-    // Кнопка Switch (Mode 1)
-    else if (mode == 1) {
+        strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/dual\"'>Dual Mode</button>");
+    } else if (main_mode == 1) {
         strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/toggle\"'>Toggle Mode</button>");
         strcat(dynamic_content, "<button class='mode-btn mode-active' onclick='location.href=\"/mode/switch\"'>Switch Mode</button>");
-        strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/hiz\"'>Hi-Z Mode</button>");
-    }
-    // Кнопка Hi-Z (Mode 2)
-    else {
+        strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/dual\"'>Dual Mode</button>");
+    } else { // Dual Mode
         strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/toggle\"'>Toggle Mode</button>");
         strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/switch\"'>Switch Mode</button>");
-        strcat(dynamic_content, "<button class='mode-btn mode-active' onclick='location.href=\"/mode/hiz\"'>Hi-Z Mode</button>");
+        strcat(dynamic_content, "<button class='mode-btn mode-active' onclick='location.href=\"/mode/dual\"'>Dual Mode</button>");
+    }
+    strcat(dynamic_content, "</div>");
+
+    // === DUAL MODE: дополнительные селекторы ===
+    if (main_mode == 2) {
+        // Группа 1 (выходы 1-4)
+        strcat(dynamic_content, "<div style='margin:15px 0;padding:12px;background:#e3f2fd;border-radius:6px;'>");
+        strcat(dynamic_content, "<strong>OUTS 1-4</strong> ");
+        if (dual_g1 == 0) {
+            strcat(dynamic_content, "<button class='mode-btn mode-active' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g1/toggle\"'>Toggle</button>");
+            strcat(dynamic_content, "<button class='mode-btn mode-inactive' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g1/switch\"'>Switch</button>");
+        } else {
+            strcat(dynamic_content, "<button class='mode-btn mode-inactive' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g1/toggle\"'>Toggle</button>");
+            strcat(dynamic_content, "<button class='mode-btn mode-active' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g1/switch\"'>Switch</button>");
+        }
+        strcat(dynamic_content, "</div>");
+
+        // Группа 2 (выходы 5-8)
+        strcat(dynamic_content, "<div style='margin:15px 0;padding:12px;background:#e8f5e9;border-radius:6px;'>");
+        strcat(dynamic_content, "<strong>OUTS 5-8</strong> ");
+        if (dual_g2 == 0) {
+            strcat(dynamic_content, "<button class='mode-btn mode-active' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g2/toggle\"'>Toggle</button>");
+            strcat(dynamic_content, "<button class='mode-btn mode-inactive' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g2/switch\"'>Switch</button>");
+        } else {
+            strcat(dynamic_content, "<button class='mode-btn mode-inactive' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g2/toggle\"'>Toggle</button>");
+            strcat(dynamic_content, "<button class='mode-btn mode-active' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g2/switch\"'>Switch</button>");
+        }
+        strcat(dynamic_content, "</div>");
     }
 
-    strcat(dynamic_content, "</div><div class='btn-grid'>");
-
-    // Цикл отрисовки кнопок
+    // === СЕТКА КНОПОК ===
+    strcat(dynamic_content, "<div class='btn-grid'>");
     for (int i = 0; i < 8; i++) {
-        // В режиме Hi-Z отображаем только первые 4 выхода (0-3)
-        if (mode == 2 && i >= 4) {
-            continue;
-        }
-
         if (gpio_states[i] == 1) {
-            if (mode == 2) {
-                // В режиме Hi-Z включенное состояние - КРАСНЫЙ (btn-off класс используется как красный в CSS, либо создадим специальный)
-                // В вашем CSS .btn-off имеет красный фон. Используем его для состояния ON в режиме Hi-Z.
-                snprintf(temp, sizeof(temp),
-                    "<a href='/gpio%d/off' class='btn btn-off'>%s ON</a>", // Ссылка на /off используется как триггер выключения
-                    i, button_names[i]);
-            } else {
-                // Стандартное поведение: Зеленый при включении
-                snprintf(temp, sizeof(temp),
-                    "<a href='/gpio%d/off' class='btn btn-on'>%s ON</a>",
-                    i, button_names[i]);
-            }
+            snprintf(temp, sizeof(temp),
+                "<a href='/gpio%d/off' class='btn btn-on'>%s ON</a>",
+                i, button_names[i]);
         } else {
-            if (mode == 2) {
-
-                snprintf(temp, sizeof(temp),
-                    "<a href='/gpio%d/on' class='btn' style='background:#6c757d;color:white;'>%s OFF</a>",
-                    i, button_names[i]);
-            } else {
-                // Стандартное поведение: Красный при выключении
-                snprintf(temp, sizeof(temp),
-                    "<a href='/gpio%d/on' class='btn btn-off'>%s OFF</a>",
-                    i, button_names[i]);
-            }
+            snprintf(temp, sizeof(temp),
+                "<a href='/gpio%d/on' class='btn btn-off'>%s OFF</a>",
+                i, button_names[i]);
         }
         strcat(dynamic_content, temp);
     }
+    strcat(dynamic_content, "</div>");
 
-    strcat(dynamic_content, "</div><div class='status'>");
+    // Статус
+    strcat(dynamic_content, "<div class='status'>");
     if (strlen(last_status_message) > 0) {
         strcat(dynamic_content, last_status_message);
     } else {
@@ -483,7 +489,6 @@ void send_web_page(uint8_t socket, const char *base_page, uint8_t gpio_states[],
     send(socket, (uint8_t*)header, strlen(header));
     send(socket, (uint8_t*)full_page, strlen(full_page));
 }
-
 
 
 void SetGPIO(uint8_t gpio_num, uint8_t state)
@@ -1169,317 +1174,325 @@ static void MX_TIM11_Init(void);
   * @brief  The application entry point.
   * @retval int
   */
-int main(void) {
-	/* USER CODE BEGIN 1 */
-	/* USER CODE END 1 */
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(void)
+{
+  /* USER CODE BEGIN 1 */
 
-	/* MCU Configuration--------------------------------------------------------*/
-	HAL_Init();
-	SystemClock_Config();
-	MX_GPIO_Init();
-	MX_SPI1_Init();
-	MX_TIM11_Init();
-	MX_USB_DEVICE_Init();
+  /* USER CODE END 1 */
 
-	/* USER CODE BEGIN 2 */
-	LL_TIM_EnableCounter(TIM11);
-	LL_TIM_EnableIT_UPDATE(TIM11);
+  /* MCU Configuration--------------------------------------------------------*/
 
-	HAL_Delay(2000);
+  HAL_Init();
+  SystemClock_Config();
+  MX_GPIO_Init();
+  MX_SPI1_Init();
+  MX_TIM11_Init();
+  MX_USB_DEVICE_Init();
 
-	if (!ReadSettingsFromEEPROM()) {
-		LoadDefaultSettings();
-		printf("Using default settings\r\n");
-	} else {
-		printf("Settings loaded from EEPROM\r\n");
-	}
-	ApplyNetworkSettings();
-	UpdateHTTPBase64();
+  /* USER CODE BEGIN 2 */
+  LL_TIM_EnableCounter(TIM11);
+  LL_TIM_EnableIT_UPDATE(TIM11);
 
-	printf("System initialized\r\n");
+  HAL_Delay(2000);
 
-	HAL_GPIO_WritePin(SPI1_RST_GPIO_Port, SPI1_RST_Pin, GPIO_PIN_RESET);
-	HAL_Delay(10);
-	HAL_GPIO_WritePin(SPI1_RST_GPIO_Port, SPI1_RST_Pin, GPIO_PIN_SET);
-	HAL_Delay(2000);
+  // Загрузка настроек из EEPROM или дефолтных
+  if (!ReadSettingsFromEEPROM()) {
+      LoadDefaultSettings();
+      printf("Using default settings\r\n");
+  } else {
+      printf("Settings loaded from EEPROM\r\n");
+  }
+  ApplyNetworkSettings();
+  UpdateHTTPBase64();
 
-	reg_wizchip_cs_cbfunc(W5500_Select, W5500_Unselect);
-	reg_wizchip_spi_cbfunc(W5500_ReadByte, W5500_WriteByte);
-	reg_wizchip_spiburst_cbfunc(W5500_ReadBuff, W5500_WriteBuff);
+  // Инициализация режимов работы
+  operation_mode = 0;              // 0=Toggle(global), 1=Switch(global), 2=Dual
+  dual_mode_group1 = 0;            // 0=toggle, 1=switch для GPIO 0-3 (выходы 1-4)
+  dual_mode_group2 = 0;            // 0=toggle, 1=switch для GPIO 4-7 (выходы 5-8)
 
-	uint8_t rx_tx_buff_sizes[] = { 8, 1, 1, 1, 1, 1, 1, 1 };
-	wizchip_init(rx_tx_buff_sizes, rx_tx_buff_sizes);
-	wizchip_setnetinfo(&gWIZNETINFO);
+  printf("System initialized\r\n");
 
-	printf("W5500 initialized, IP: %d.%d.%d.%d\r\n", gWIZNETINFO.ip[0],
-			gWIZNETINFO.ip[1], gWIZNETINFO.ip[2], gWIZNETINFO.ip[3]);
-	if (socket(HTTP_SOCKET, Sn_MR_TCP, 80, 0) != HTTP_SOCKET) {
-		printf("Socket creation failed!\r\n");
-		while (1) {
-			HAL_Delay(1000);
-		}
-	}
+  // Сброс и инициализация W5500
+  HAL_GPIO_WritePin(SPI1_RST_GPIO_Port, SPI1_RST_Pin, GPIO_PIN_RESET);
+  HAL_Delay(10);
+  HAL_GPIO_WritePin(SPI1_RST_GPIO_Port, SPI1_RST_Pin, GPIO_PIN_SET);
+  HAL_Delay(2000);
 
-	if (listen(HTTP_SOCKET) != SOCK_OK) {
-		printf("Listen failed!\r\n");
-		while (1) {
-			HAL_Delay(1000);
-		}
-	}
+  reg_wizchip_cs_cbfunc(W5500_Select, W5500_Unselect);
+  reg_wizchip_spi_cbfunc(W5500_ReadByte, W5500_WriteByte);
+  reg_wizchip_spiburst_cbfunc(W5500_ReadBuff, W5500_WriteBuff);
 
-	printf("HTTP Server listening on port 80...\r\n");
+  uint8_t rx_tx_buff_sizes[] = { 8, 1, 1, 1, 1, 1, 1, 1 };
+  wizchip_init(rx_tx_buff_sizes, rx_tx_buff_sizes);
+  wizchip_setnetinfo(&gWIZNETINFO);
 
-	/* USER CODE END 2 */
+  printf("W5500 initialized, IP: %d.%d.%d.%d\r\n", gWIZNETINFO.ip[0],
+          gWIZNETINFO.ip[1], gWIZNETINFO.ip[2], gWIZNETINFO.ip[3]);
 
-	/* Infinite loop */
-	while (1) {
-		ProcessUSBData();
-		CheckW5500();
-		EnsureSocketClosedIfNeeded();
-		uint8_t status = getSn_SR(HTTP_SOCKET);
+  if (socket(HTTP_SOCKET, Sn_MR_TCP, 80, 0) != HTTP_SOCKET) {
+      printf("Socket creation failed!\r\n");
+      while (1) { HAL_Delay(1000); }
+  }
 
-		uint32_t now = HAL_GetTick();
-		if ((status == SOCK_ESTABLISHED || status == SOCK_CLOSE_WAIT)
-				&& socket_active_since != 0) {
-			if (now - socket_active_since > 10000) {
-				printf("Socket stuck >10s, force closing socket %d\r\n",
-				HTTP_SOCKET);
-				close(HTTP_SOCKET);
-				socket_active_since = 0;
-			}
-		}
-		switch (status) {
-		case SOCK_ESTABLISHED: {
-			if (socket_active_since == 0) {
-				socket_active_since = now;
-			}
-			uint8_t http_request[1024] = { 0 };
-			uint16_t total_len = 0;
-			uint32_t recv_start = HAL_GetTick();
-			while (total_len < sizeof(http_request) - 1) {
-				int16_t len = recv(HTTP_SOCKET, http_request + total_len,
-						sizeof(http_request) - total_len - 1);
+  if (listen(HTTP_SOCKET) != SOCK_OK) {
+      printf("Listen failed!\r\n");
+      while (1) { HAL_Delay(1000); }
+  }
 
-				if (len > 0) {
-					total_len += len;
-					recv_start = HAL_GetTick();
-					if (total_len >= 4
-							&& memcmp(http_request + total_len - 4, "\r\n\r\n",
-									4) == 0) {
-						break;
-					}
-				} else if (len == 0) {
-					if (HAL_GetTick() - recv_start > 3000) {
-						printf("Recv timeout\r\n");
-						break;
-					}
-					HAL_Delay(1);
-				} else {
-					printf("Recv error: %d\r\n", len);
-					break;
-				}
-			}
+  printf("HTTP Server listening on port 80...\r\n");
 
-			if (total_len > 0) {
-				http_request[total_len] = '\0';
+  /* USER CODE END 2 */
 
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1)
+  {
+    ProcessUSBData();
+    CheckW5500();
+    EnsureSocketClosedIfNeeded();
+
+    uint8_t status = getSn_SR(HTTP_SOCKET);
+    uint32_t now = HAL_GetTick();
+
+    // Контроль "зависшего" сокета
+    if ((status == SOCK_ESTABLISHED || status == SOCK_CLOSE_WAIT) && socket_active_since != 0) {
+        if (now - socket_active_since > 10000) {
+            printf("Socket stuck >10s, force closing socket %d\r\n", HTTP_SOCKET);
+            close(HTTP_SOCKET);
+            socket_active_since = 0;
+        }
+    }
+
+    switch (status) {
+    case SOCK_ESTABLISHED: {
+        if (socket_active_since == 0) {
+            socket_active_since = now;
+        }
+
+        uint8_t http_request[1024] = { 0 };
+        uint16_t total_len = 0;
+        uint32_t recv_start = HAL_GetTick();
+
+        // Приём HTTP-запроса
+        while (total_len < sizeof(http_request) - 1) {
+            int16_t len = recv(HTTP_SOCKET, http_request + total_len,
+                    sizeof(http_request) - total_len - 1);
+
+            if (len > 0) {
+                total_len += len;
+                recv_start = HAL_GetTick();
+                if (total_len >= 4 && memcmp(http_request + total_len - 4, "\r\n\r\n", 4) == 0) {
+                    break;
+                }
+            } else if (len == 0) {
+                if (HAL_GetTick() - recv_start > 3000) {
+                    printf("Recv timeout\r\n");
+                    break;
+                }
+                HAL_Delay(1);
+            } else {
+                printf("Recv error: %d\r\n", len);
+                break;
+            }
+        }
+
+        if (total_len > 0) {
+            http_request[total_len] = '\0';
+
+            // === ПРОВЕРКА АУТЕНТИФИКАЦИИ ===
 #ifdef AUTH_ON
-				if (strstr((char*) http_request, "GET /favicon.ico") == NULL) {
-					if (!check_authentication(http_request)) {
-						send_auth_required(HTTP_SOCKET);
-						uint32_t start = HAL_GetTick();
-						while (getSn_TX_RD(HTTP_SOCKET)
-								!= getSn_TX_WR(HTTP_SOCKET)) {
-							if (HAL_GetTick() - start
-									> 500|| getSn_SR(HTTP_SOCKET) != SOCK_ESTABLISHED) {
-								break;
-							}
-							HAL_Delay(1);
-						}
-						goto skip_page_serve_and_close;
-					}
-				}
+            if (strstr((char*) http_request, "GET /favicon.ico") == NULL) {
+                if (!check_authentication(http_request)) {
+                    send_auth_required(HTTP_SOCKET);
+                    uint32_t start = HAL_GetTick();
+                    while (getSn_TX_RD(HTTP_SOCKET) != getSn_TX_WR(HTTP_SOCKET)) {
+                        if (HAL_GetTick() - start > 500 || getSn_SR(HTTP_SOCKET) != SOCK_ESTABLISHED) {
+                            break;
+                        }
+                        HAL_Delay(1);
+                    }
+                    goto skip_page_serve_and_close;
+                }
+            }
 #endif
 
-				if (strstr((char*) http_request, "GET /mode/toggle")) {
-				    operation_mode = 0;
-				    snprintf(last_status_message, sizeof(last_status_message), "Toggle mode activated");
-				    printf("Switch to Toggle mode\r\n");
-				} else if (strstr((char*) http_request, "GET /mode/switch")) {
-				    operation_mode = 1;
-				    snprintf(last_status_message, sizeof(last_status_message), "Switch mode activated");
-				    printf("Switch to Switch mode\r\n");
-				} else if (strstr((char*) http_request, "GET /mode/hiz")) {
-				    operation_mode = 2;
-				    // При переходе в Hi-Z сбрасываем все выходы в 0 для безопасности
-				    for(int k=0; k<8; k++) { gpio_states[k] = 0; SetGPIO(k, 0); }
-				    snprintf(last_status_message, sizeof(last_status_message), "Hi-Z mode activated");
-				    printf("Switch to Hi-Z mode\r\n");
-				}
+            // === ОБРАБОТКА СМЕНЫ РЕЖИМОВ ===
+            if (strstr((char*) http_request, "GET /mode/toggle")) {
+                operation_mode = 0;
+                snprintf(last_status_message, sizeof(last_status_message), "Toggle Mode (global)");
+                printf("Global Toggle mode\r\n");
+            }
+            else if (strstr((char*) http_request, "GET /mode/switch")) {
+                operation_mode = 1;
+                snprintf(last_status_message, sizeof(last_status_message), "Switch Mode (global)");
+                printf("Global Switch mode\r\n");
+            }
+            else if (strstr((char*) http_request, "GET /mode/dual")) {
+                operation_mode = 2;
+                snprintf(last_status_message, sizeof(last_status_message), "Dual Mode active");
+                printf("Dual mode activated\r\n");
+            }
+            // Настройка группы 1 внутри Dual Mode
+            else if (strstr((char*) http_request, "GET /dual/g1/toggle")) {
+                dual_mode_group1 = 0;
+                snprintf(last_status_message, sizeof(last_status_message), "Group 1: Toggle");
+                printf("Dual: Group 1 -> Toggle\r\n");
+            }
+            else if (strstr((char*) http_request, "GET /dual/g1/switch")) {
+                dual_mode_group1 = 1;
+                snprintf(last_status_message, sizeof(last_status_message), "Group 1: Switch");
+                printf("Dual: Group 1 -> Switch\r\n");
+            }
+            // Настройка группы 2 внутри Dual Mode
+            else if (strstr((char*) http_request, "GET /dual/g2/toggle")) {
+                dual_mode_group2 = 0;
+                snprintf(last_status_message, sizeof(last_status_message), "Group 2: Toggle");
+                printf("Dual: Group 2 -> Toggle\r\n");
+            }
+            else if (strstr((char*) http_request, "GET /dual/g2/switch")) {
+                dual_mode_group2 = 1;
+                snprintf(last_status_message, sizeof(last_status_message), "Group 2: Switch");
+                printf("Dual: Group 2 -> Switch\r\n");
+            }
 
-				for (int i = 0; i < 8; i++) {
-				    char on_pattern[20], off_pattern[20];
-				    snprintf(on_pattern, sizeof(on_pattern), "GET /gpio%d/on", i);
-				    snprintf(off_pattern, sizeof(off_pattern), "GET /gpio%d/off", i);
+            // === ОБРАБОТКА УПРАВЛЕНИЯ ВЫХОДАМИ (ИСПРАВЛЕНО) ===
+            for (int i = 0; i < 8; i++) {
+                char on_pattern[20], off_pattern[20];
+                snprintf(on_pattern, sizeof(on_pattern), "GET /gpio%d/on", i);
+                snprintf(off_pattern, sizeof(off_pattern), "GET /gpio%d/off", i);
 
-				    // Проверка запроса на включение (или переключение)
-				    if (strstr((char*) http_request, on_pattern)) {
+                // Определяем: нужно ли применять логику Switch для данного пина,
+                // и в каком диапазоне выключать остальные
+                uint8_t use_switch_logic = 0;
+                int range_start = 0, range_end = 8;
 
-				        if (operation_mode == 2) {
-				            // === ЛОГИКА HI-Z MODE (Binary Code) ===
+                if (operation_mode == 1) {
+                    // Глобальный Switch: выключаются ВСЕ остальные выходы (0-7)
+                    use_switch_logic = 1;
+                    range_start = 0;
+                    range_end = 8;
+                } else if (operation_mode == 2) {
+                    // Dual Mode: выключаются только выходы в текущей группе
+                    if (i < 4) {
+                        use_switch_logic = (dual_mode_group1 == 1) ? 1 : 0;
+                        range_start = 0;
+                        range_end = 4;
+                    } else {
+                        use_switch_logic = (dual_mode_group2 == 1) ? 1 : 0;
+                        range_start = 4;
+                        range_end = 8;
+                    }
+                }
+                // Если operation_mode == 0 (Global Toggle) -> use_switch_logic = 0
 
-				            // Разрешаем работу только для первых 4 кнопок (0, 1, 2, 3)
-				            if (i >= 4) {
-				                continue; // Игнорируем нажатия на OUT5-OUT8
-				            }
+                if (strstr((char*) http_request, on_pattern)) {
+                    if (use_switch_logic) {
+                        // === SWITCH MODE ===
+                        for (int j = range_start; j < range_end; j++) {
+                            if (j != i) {
+                                gpio_states[j] = 0;
+                                SetGPIO(j, 0);
+                            }
+                        }
+                        gpio_states[i] = 1;
+                        SetGPIO(i, 1);
+                        snprintf(last_status_message, sizeof(last_status_message),
+                                 "GPIO %d ON (Switch)", i+1);
+                        printf("GPIO %d ON (Switch mode)\r\n", i+1);
+                    } else {
+                        // === TOGGLE MODE ===
+                        gpio_states[i] = !gpio_states[i];
+                        SetGPIO(i, gpio_states[i]);
+                        if (gpio_states[i]) {
+                            snprintf(last_status_message, sizeof(last_status_message),
+                                     "GPIO %d ON (Toggle)", i+1);
+                            printf("GPIO %d ON (Toggle mode)\r\n", i+1);
+                        } else {
+                            snprintf(last_status_message, sizeof(last_status_message),
+                                     "GPIO %d OFF (Toggle)", i+1);
+                            printf("GPIO %d OFF (Toggle mode)\r\n", i+1);
+                        }
+                    }
+                }
+                else if (strstr((char*) http_request, off_pattern)) {
+                    // Явное выключение (работает в любом режиме)
+                    gpio_states[i] = 0;
+                    SetGPIO(i, 0);
+                    snprintf(last_status_message, sizeof(last_status_message), "GPIO %d OFF", i+1);
+                    printf("GPIO %d turned OFF\r\n", i+1);
+                }
+            }
 
-				            if (gpio_states[i] == 1) {
-				                // Кнопка уже была нажата (горит красным) -> Выключаем её (сброс в 00)
-				                gpio_states[i] = 0;
-				                // Физически ставим пины в состояние 00
-				                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
-				                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
+            // Отправка веб-страницы
+            send_web_page(HTTP_SOCKET, main_page, gpio_states, button_names,
+                          operation_mode, dual_mode_group1, dual_mode_group2);
 
-				                // Примечание: SetGPIO(i, 0) можно не вызывать, так как мы напрямую управляем PIN_0 и PIN_1,
-				                // но для чистоты массива состояний остальных пинов можно оставить.
+            ensure_socket_closed(HTTP_SOCKET);
+            uint32_t start = HAL_GetTick();
+            while (getSn_TX_RD(HTTP_SOCKET) != getSn_TX_WR(HTTP_SOCKET)) {
+                if (HAL_GetTick() - start > 1000 || getSn_SR(HTTP_SOCKET) != SOCK_ESTABLISHED) {
+                    break;
+                }
+                HAL_Delay(1);
+            }
+        }
 
-				                snprintf(last_status_message, sizeof(last_status_message), "GPIO %d turned OFF (Hi-Z Reset)", i);
-				                printf("GPIO %d OFF (Hi-Z) -> PB0=0, PB1=0\r\n", i);
-				            } else {
-				                // Кнопка была выключена -> Включаем её и выключаем остальные
-				                // 1. Сбрасываем состояния всех 4 кнопок в массиве
-				                for (int j = 0; j < 4; j++) {
-				                    gpio_states[j] = 0;
-				                    // Опционально: SetGPIO(j, 0);
-				                }
+        disconnect(HTTP_SOCKET);
+        socket_active_since = 0;
+        uint32_t close_start = HAL_GetTick();
+        while (getSn_SR(HTTP_SOCKET) != SOCK_CLOSED) {
+            if (HAL_GetTick() - close_start > 1000) {
+                printf("Force close after disconnect timeout\r\n");
+                close(HTTP_SOCKET);
+                break;
+            }
+            HAL_Delay(1);
+        }
+        skip_page_serve_and_close:
+        break;
+    }
 
-				                // 2. Включаем текущую кнопку в массиве (для подсветки)
-				                gpio_states[i] = 1;
+    case SOCK_CLOSE_WAIT:
+        disconnect(HTTP_SOCKET);
+        socket_active_since = 0;
+        break;
 
-				                // 3. Устанавливаем двоичный код на GPIOB_PIN_0 и GPIOB_PIN_1
-				                switch(i) {
-				                    case 0: // OUT1 -> 00
-				                        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
-				                        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
-				                        printf("OUT1 Selected -> PB0=0, PB1=0\r\n");
-				                        break;
-				                    case 1: // OUT2 -> 10 (PIN_0=1, PIN_1=0 по вашему ТЗ)
-				                        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
-				                        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
-				                        printf("OUT2 Selected -> PB0=1, PB1=0\r\n");
-				                        break;
-				                    case 2: // OUT3 -> 01 (PIN_0=0, PIN_1=1 по вашему ТЗ)
-				                        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
-				                        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
-				                        printf("OUT3 Selected -> PB0=0, PB1=1\r\n");
-				                        break;
-				                    case 3: // OUT4 -> 11
-				                        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
-				                        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
-				                        printf("OUT4 Selected -> PB0=1, PB1=1\r\n");
-				                        break;
-				                }
+    case SOCK_CLOSED:
+        close(HTTP_SOCKET);
+        HAL_Delay(1);
+        if (socket(HTTP_SOCKET, Sn_MR_TCP, 80, 0) == HTTP_SOCKET) {
+            if (listen(HTTP_SOCKET) != SOCK_OK) {
+                printf("Listen failed after socket creation!\r\n");
+                close(HTTP_SOCKET);
+            }
+        } else {
+            printf("Socket re-creation failed!\r\n");
+            HAL_Delay(1000);
+        }
+        break;
 
-				                snprintf(last_status_message, sizeof(last_status_message), "GPIO %d turned ON (Hi-Z Code)", i);
-				            }
+    case SOCK_INIT:
+    case SOCK_LISTEN:
+        break;
 
-				        } else if (operation_mode == 1) {
-				            // === ЛОГИКА SWITCH MODE (Стандартная) ===
-				            for (int j = 0; j < 8; j++) {
-				                if (j != i) {
-				                    gpio_states[j] = 0;
-				                    SetGPIO(j, 0);
-				                }
-				            }
-				            gpio_states[i] = 1;
-				            SetGPIO(i, 1);
-				            snprintf(last_status_message, sizeof(last_status_message), "GPIO %d turned ON (Switch mode)", i);
-				            printf("GPIO %d turned ON in Switch mode\r\n", i);
+    default:
+        break;
+    }
 
-				        } else {
-				            // === ЛОГИКА TOGGLE MODE (Стандартная) ===
-				            gpio_states[i] = !gpio_states[i];
-				            SetGPIO(i, gpio_states[i]);
-				            if (gpio_states[i]) {
-				                snprintf(last_status_message, sizeof(last_status_message), "GPIO %d turned ON (Toggle mode)", i);
-				                printf("GPIO %d turned ON in Toggle mode\r\n", i);
-				            } else {
-				                snprintf(last_status_message, sizeof(last_status_message), "GPIO %d turned OFF (Toggle mode)", i);
-				                printf("GPIO %d turned OFF in Toggle mode\r\n", i);
-				            }
-				        }
-
-				    } else if (strstr((char*) http_request, off_pattern)) {
-				        // Обработка явного запроса на выключение (если пользователь попал сюда напрямую)
-				        if (operation_mode == 2 && i < 4) {
-				             gpio_states[i] = 0;
-				             // Сброс кода в 00 при любом выключении в этом режиме
-				             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
-				             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
-				             snprintf(last_status_message, sizeof(last_status_message), "GPIO %d turned OFF", i);
-				        } else {
-				            gpio_states[i] = 0;
-				            SetGPIO(i, 0);
-				            snprintf(last_status_message, sizeof(last_status_message), "GPIO %d turned OFF", i);
-				            printf("GPIO %d turned OFF\r\n", i);
-				        }
-				    }
-				}
-				send_web_page(HTTP_SOCKET, main_page, gpio_states, button_names,
-						operation_mode);
-				ensure_socket_closed(HTTP_SOCKET);
-				uint32_t start = HAL_GetTick();
-				while (getSn_TX_RD(HTTP_SOCKET) != getSn_TX_WR(HTTP_SOCKET)) {
-					if (HAL_GetTick() - start
-							> 1000|| getSn_SR(HTTP_SOCKET) != SOCK_ESTABLISHED) {
-						break;
-					}
-					HAL_Delay(1);
-				}
-			}
-			disconnect(HTTP_SOCKET);
-			socket_active_since = 0;
-			uint32_t close_start = HAL_GetTick();
-			while (getSn_SR(HTTP_SOCKET) != SOCK_CLOSED) {
-				if (HAL_GetTick() - close_start > 1000) {
-					printf("Force close after disconnect timeout\r\n");
-					close(HTTP_SOCKET);
-					break;
-				}
-				HAL_Delay(1);
-			}
-			skip_page_serve_and_close: break;
-		}
-
-		case SOCK_CLOSE_WAIT:
-			disconnect(HTTP_SOCKET);
-			socket_active_since = 0;
-			break;
-
-		case SOCK_CLOSED:
-			close(HTTP_SOCKET);
-			HAL_Delay(1);
-			if (socket(HTTP_SOCKET, Sn_MR_TCP, 80, 0) == HTTP_SOCKET) {
-				if (listen(HTTP_SOCKET) != SOCK_OK) {
-					printf("Listen failed after socket creation!\r\n");
-					close(HTTP_SOCKET);
-				}
-			} else {
-				printf("Socket re-creation failed!\r\n");
-				HAL_Delay(1000);
-			}
-			break;
-
-		case SOCK_INIT:
-		case SOCK_LISTEN:
-			break;
-
-		default:
-			break;
-		}
-
-		HAL_Delay(1);
-	}
+    HAL_Delay(1);
+    /* USER CODE END WHILE */
+  }
+  /* USER CODE BEGIN 3 */
+  return 0;
+  /* USER CODE END 3 */
 }
 /* USER CODE END 3 */
 

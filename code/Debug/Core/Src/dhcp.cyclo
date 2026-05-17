@@ -16,7 +16,7 @@
 ../Core/Src/dhcp.c:1001:6:getDNSfromDHCP	1
 ../Core/Src/dhcp.c:1009:10:getDHCPLeasetime	1
 ../Core/Src/dhcp.c:1014:6:NibbleToHex	2
-../Core/Src/dhcp.c:354:6:send_DHCP_DISCOVER	2
-../Core/Src/dhcp.c:427:6:send_DHCP_REQUEST	4
+../Core/Src/dhcp.c:354:6:send_DHCP_DISCOVER	3
+../Core/Src/dhcp.c:427:6:send_DHCP_REQUEST	5
 ../Core/Src/dhcp.c:842:9:check_DHCP_timeout	9
 ../Core/Src/dhcp.c:706:9:DHCP_run	20

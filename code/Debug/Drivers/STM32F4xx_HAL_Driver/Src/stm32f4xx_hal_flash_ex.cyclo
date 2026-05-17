@@ -1,4 +1,4 @@
-../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_flash_ex.c:948:13:FLASH_MassErase.constprop	1
+../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_flash_ex.c:948:13:FLASH_MassErase.isra	1
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_flash_ex.c:281:19:HAL_FLASHEx_OBProgram	11
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_flash_ex.c:340:6:HAL_FLASHEx_OBGetConfig	2
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_flash_ex.c:369:19:HAL_FLASHEx_AdvOBProgram	5

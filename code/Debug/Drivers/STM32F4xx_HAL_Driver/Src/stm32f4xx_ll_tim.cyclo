@@ -1,6 +1,6 @@
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_tim.c:168:13:LL_TIM_DeInit	9
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_tim.c:285:6:LL_TIM_StructInit	1
-../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_tim.c:304:13:LL_TIM_Init	15
+../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_tim.c:304:13:LL_TIM_Init	10
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_tim.c:356:6:LL_TIM_OC_StructInit	1
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_tim.c:383:13:LL_TIM_OC_Init	10
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_tim.c:415:6:LL_TIM_IC_StructInit	1
