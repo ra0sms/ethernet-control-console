@@ -31,13 +31,13 @@
 
 #define AUTH_ON
 #define HTTP_SOCKET     0
-#define DATA_BUF_SIZE   16384
+
 #define MAX_SOCK_NUM 8
 #define HTTP_PORT 80
 #define EEPROM_START_ADDRESS 0x08030000
 #define EEPROM_MAGIC_NUMBER 0xABCD1235
 
-uint8_t gDATABUF[DATA_BUF_SIZE];
+
 uint8_t stat;
 uint32_t socket_active_since = 0;
 char g_http_user[32] = "admin";
@@ -67,6 +67,7 @@ void ProcessSetButtonCommand(char* args);
 void LoadButtonNamesFromEEPROM(void);
 void ShowButtonNames(void);
 void TrimWhitespace(char* str);
+void SetGPIO(uint8_t gpio_num, uint8_t state);
 
 #pragma pack(push, 1)
 typedef struct {
@@ -75,6 +76,10 @@ typedef struct {
     char button_names[8][16];
     char http_user[32];
     char http_pass[32];
+    uint8_t operation_mode;
+    uint8_t dual_mode_group1;
+    uint8_t dual_mode_group2;
+    uint8_t gpio_states_saved[8];
     uint32_t crc;
 } EEPROM_Data;
 #pragma pack(pop)
@@ -156,7 +161,7 @@ void base64_encode(const unsigned char* data, size_t input_length, char* output)
     uint32_t triple;
 
     while (i + 3 <= input_length) {
-        triple = (data[i] << 16) + (data[i+1] << 8) + data[i+2];
+        triple = ((uint32_t)data[i] << 16) | ((uint32_t)data[i+1] << 8) | (uint32_t)data[i+2];
         output[j++] = base64_chars[(triple >> 18) & 0x3F];
         output[j++] = base64_chars[(triple >> 12) & 0x3F];
         output[j++] = base64_chars[(triple >>  6) & 0x3F];
@@ -165,13 +170,13 @@ void base64_encode(const unsigned char* data, size_t input_length, char* output)
     }
 
     if (i + 2 == input_length) {
-        triple = (data[i] << 16) + (data[i+1] << 8);
+        triple = ((uint32_t)data[i] << 16) | ((uint32_t)data[i+1] << 8);
         output[j++] = base64_chars[(triple >> 18) & 0x3F];
         output[j++] = base64_chars[(triple >> 12) & 0x3F];
         output[j++] = base64_chars[(triple >>  6) & 0x3F];
         output[j++] = '=';
     } else if (i + 1 == input_length) {
-        triple = (data[i] << 16);
+        triple = ((uint32_t)data[i] << 16);
         output[j++] = base64_chars[(triple >> 18) & 0x3F];
         output[j++] = base64_chars[(triple >> 12) & 0x3F];
         output[j++] = '=';
@@ -215,7 +220,6 @@ void send_auth_required(uint8_t socket) {
         "HTTP/1.1 401 Unauthorized\r\n"
         "WWW-Authenticate: Basic realm=\"LAN Control Console\"\r\n"
         "Content-Type: text/html\r\n"
-  //      "Connection: close\r\n"
         "Content-Length: 0\r\n\r\n";
 
     send(socket, (uint8_t*)auth_page, strlen(auth_page));
@@ -224,7 +228,13 @@ void send_auth_required(uint8_t socket) {
 
 int _write(int file, char *ptr, int len)
 {
-    CDC_Transmit_FS((uint8_t*)ptr, len);
+    uint8_t result;
+    uint32_t start = HAL_GetTick();
+    do {
+        result = CDC_Transmit_FS((uint8_t*)ptr, len);
+        if (result != USBD_BUSY) break;   /* OK или FAIL — выходим немедленно */
+        HAL_Delay(1);
+    } while (HAL_GetTick() - start < 10); /* ждём не более 10 мс */
     return len;
 }
 
@@ -287,6 +297,10 @@ void WriteSettingsToEEPROM(void)
     eeprom_data.http_user[31] = '\0';
     strncpy(eeprom_data.http_pass, g_http_pass, 31);
     eeprom_data.http_pass[31] = '\0';
+    eeprom_data.operation_mode = operation_mode;
+    eeprom_data.dual_mode_group1 = dual_mode_group1;
+    eeprom_data.dual_mode_group2 = dual_mode_group2;
+    memcpy(eeprom_data.gpio_states_saved, gpio_states, 8);
     size_t checksum_size = sizeof(EEPROM_Data) - sizeof(uint32_t);
     eeprom_data.crc = CalculateXORChecksum((uint8_t*)&eeprom_data, checksum_size);
 
@@ -350,12 +364,18 @@ uint8_t ReadSettingsFromEEPROM(void)
         strncpy(button_names[i], eeprom_data->button_names[i], 15);
         button_names[i][15] = '\0';
         printf("Button %d: '%s'\r\n", i, button_names[i]);
-        HAL_Delay(1);
     }
     strncpy(g_http_user, eeprom_data->http_user, 31);
     g_http_user[31] = '\0';
     strncpy(g_http_pass, eeprom_data->http_pass, 31);
     g_http_pass[31] = '\0';
+    operation_mode    = eeprom_data->operation_mode;
+    dual_mode_group1  = eeprom_data->dual_mode_group1;
+    dual_mode_group2  = eeprom_data->dual_mode_group2;
+    memcpy(gpio_states, eeprom_data->gpio_states_saved, 8);
+    for(int i = 0; i < 8; i++) {
+        SetGPIO(i, gpio_states[i]);
+    }
     UpdateHTTPBase64();
     printf("Settings loaded from EEPROM\r\n");
     return 1;
@@ -390,6 +410,10 @@ void LoadDefaultSettings(void)
     g_http_user[31] = '\0';
     strncpy(g_http_pass, "password", 31);
     g_http_pass[31] = '\0';
+    operation_mode   = 0;
+    dual_mode_group1 = 0;
+    dual_mode_group2 = 0;
+    memset(gpio_states, 0, sizeof(gpio_states));
     UpdateHTTPBase64();
 
     printf("Loaded default settings\r\n");
@@ -400,58 +424,56 @@ void send_web_page(uint8_t socket, const char *base_page, uint8_t gpio_states[],
                    char button_names[][16], uint8_t main_mode,
                    uint8_t dual_g1, uint8_t dual_g2)
 {
-    char dynamic_content[3500];
-    char temp[300];
+    static char full_response[4096];
+    static char temp[300];
 
-    strcpy(dynamic_content, base_page);
+    // Собираем динамическую часть
+    strcpy(full_response, base_page);
 
     // === ГЛАВНЫЙ ВЫБОР РЕЖИМА ===
-    strcat(dynamic_content, "<div class='mode-selector'>");
-
+    strcat(full_response, "<div class='mode-selector'>");
     if (main_mode == 0) {
-        strcat(dynamic_content, "<button class='mode-btn mode-active' onclick='location.href=\"/mode/toggle\"'>Toggle Mode</button>");
-        strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/switch\"'>Switch Mode</button>");
-        strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/dual\"'>Dual Mode</button>");
+        strcat(full_response, "<button class='mode-btn mode-active' onclick='location.href=\"/mode/toggle\"'>Toggle Mode</button>");
+        strcat(full_response, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/switch\"'>Switch Mode</button>");
+        strcat(full_response, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/dual\"'>Dual Mode</button>");
     } else if (main_mode == 1) {
-        strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/toggle\"'>Toggle Mode</button>");
-        strcat(dynamic_content, "<button class='mode-btn mode-active' onclick='location.href=\"/mode/switch\"'>Switch Mode</button>");
-        strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/dual\"'>Dual Mode</button>");
-    } else { // Dual Mode
-        strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/toggle\"'>Toggle Mode</button>");
-        strcat(dynamic_content, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/switch\"'>Switch Mode</button>");
-        strcat(dynamic_content, "<button class='mode-btn mode-active' onclick='location.href=\"/mode/dual\"'>Dual Mode</button>");
+        strcat(full_response, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/toggle\"'>Toggle Mode</button>");
+        strcat(full_response, "<button class='mode-btn mode-active' onclick='location.href=\"/mode/switch\"'>Switch Mode</button>");
+        strcat(full_response, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/dual\"'>Dual Mode</button>");
+    } else {
+        strcat(full_response, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/toggle\"'>Toggle Mode</button>");
+        strcat(full_response, "<button class='mode-btn mode-inactive' onclick='location.href=\"/mode/switch\"'>Switch Mode</button>");
+        strcat(full_response, "<button class='mode-btn mode-active' onclick='location.href=\"/mode/dual\"'>Dual Mode</button>");
     }
-    strcat(dynamic_content, "</div>");
+    strcat(full_response, "</div>");
 
     // === DUAL MODE: дополнительные селекторы ===
     if (main_mode == 2) {
-        // Группа 1 (выходы 1-4)
-        strcat(dynamic_content, "<div style='margin:15px 0;padding:12px;background:#e3f2fd;border-radius:6px;'>");
-        strcat(dynamic_content, "<strong>OUTS 1-4</strong> ");
+        strcat(full_response, "<div style='margin:15px 0;padding:12px;background:#e3f2fd;border-radius:6px;'>");
+        strcat(full_response, "<strong>OUTS 1-4</strong> ");
         if (dual_g1 == 0) {
-            strcat(dynamic_content, "<button class='mode-btn mode-active' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g1/toggle\"'>Toggle</button>");
-            strcat(dynamic_content, "<button class='mode-btn mode-inactive' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g1/switch\"'>Switch</button>");
+            strcat(full_response, "<button class='mode-btn mode-active' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g1/toggle\"'>Toggle</button>");
+            strcat(full_response, "<button class='mode-btn mode-inactive' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g1/switch\"'>Switch</button>");
         } else {
-            strcat(dynamic_content, "<button class='mode-btn mode-inactive' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g1/toggle\"'>Toggle</button>");
-            strcat(dynamic_content, "<button class='mode-btn mode-active' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g1/switch\"'>Switch</button>");
+            strcat(full_response, "<button class='mode-btn mode-inactive' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g1/toggle\"'>Toggle</button>");
+            strcat(full_response, "<button class='mode-btn mode-active' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g1/switch\"'>Switch</button>");
         }
-        strcat(dynamic_content, "</div>");
+        strcat(full_response, "</div>");
 
-        // Группа 2 (выходы 5-8)
-        strcat(dynamic_content, "<div style='margin:15px 0;padding:12px;background:#e8f5e9;border-radius:6px;'>");
-        strcat(dynamic_content, "<strong>OUTS 5-8</strong> ");
+        strcat(full_response, "<div style='margin:15px 0;padding:12px;background:#e8f5e9;border-radius:6px;'>");
+        strcat(full_response, "<strong>OUTS 5-8</strong> ");
         if (dual_g2 == 0) {
-            strcat(dynamic_content, "<button class='mode-btn mode-active' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g2/toggle\"'>Toggle</button>");
-            strcat(dynamic_content, "<button class='mode-btn mode-inactive' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g2/switch\"'>Switch</button>");
+            strcat(full_response, "<button class='mode-btn mode-active' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g2/toggle\"'>Toggle</button>");
+            strcat(full_response, "<button class='mode-btn mode-inactive' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g2/switch\"'>Switch</button>");
         } else {
-            strcat(dynamic_content, "<button class='mode-btn mode-inactive' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g2/toggle\"'>Toggle</button>");
-            strcat(dynamic_content, "<button class='mode-btn mode-active' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g2/switch\"'>Switch</button>");
+            strcat(full_response, "<button class='mode-btn mode-inactive' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g2/toggle\"'>Toggle</button>");
+            strcat(full_response, "<button class='mode-btn mode-active' style='padding:5px 12px;font-size:12px;' onclick='location.href=\"/dual/g2/switch\"'>Switch</button>");
         }
-        strcat(dynamic_content, "</div>");
+        strcat(full_response, "</div>");
     }
 
     // === СЕТКА КНОПОК ===
-    strcat(dynamic_content, "<div class='btn-grid'>");
+    strcat(full_response, "<div class='btn-grid'>");
     for (int i = 0; i < 8; i++) {
         if (gpio_states[i] == 1) {
             snprintf(temp, sizeof(temp),
@@ -462,32 +484,33 @@ void send_web_page(uint8_t socket, const char *base_page, uint8_t gpio_states[],
                 "<a href='/gpio%d/on' class='btn btn-off'>%s OFF</a>",
                 i, button_names[i]);
         }
-        strcat(dynamic_content, temp);
+        strcat(full_response, temp);
     }
-    strcat(dynamic_content, "</div>");
+    strcat(full_response, "</div>");
 
     // Статус
-    strcat(dynamic_content, "<div class='status'>");
+    strcat(full_response, "<div class='status'>");
     if (strlen(last_status_message) > 0) {
-        strcat(dynamic_content, last_status_message);
+        strcat(full_response, last_status_message);
     } else {
-        strcat(dynamic_content, "Ready");
+        strcat(full_response, "Ready");
     }
-    strcat(dynamic_content, "</div></div></body></html>");
+    strcat(full_response, "</div></div></body></html>");
 
-    char full_page[4096];
-    snprintf(full_page, sizeof(full_page), "%s", dynamic_content);
-
-    char header[128];
-    snprintf(header, sizeof(header),
+    // === ОТПРАВКА ОДНИМ ПАКЕТОМ ===
+    char full_http_response[4600]; // 4096 + заголовки
+    int content_len = strlen(full_response);
+    int header_len = snprintf(full_http_response, sizeof(full_http_response),
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: text/html\r\n"
         "Connection: close\r\n"
-        "Content-Length: %d\r\n\r\n",
-        strlen(full_page));
+        "Content-Length: %d\r\n"
+        "\r\n"
+        "%s",
+        content_len, full_response);
 
-    send(socket, (uint8_t*)header, strlen(header));
-    send(socket, (uint8_t*)full_page, strlen(full_page));
+    // Отправляем всё одним вызовом
+    send(socket, (uint8_t*)full_http_response, header_len);
 }
 
 
@@ -526,34 +549,22 @@ void SetGPIO(uint8_t gpio_num, uint8_t state)
 
 
 void ShowHelp(void) {
-    HAL_Delay(1);
-    printf("Available commands:\r\n");
-    HAL_Delay(1);
-    printf("  help          - Show this help\r\n");
-    HAL_Delay(1);
-    printf("  network       - Show network configuration\r\n");
-    HAL_Delay(1);
-    printf("  buttons       - Show button names\r\n");
-    HAL_Delay(1);
-    printf("  set [param] [value] - Set network parameter\r\n");
-    HAL_Delay(1);
-    printf("  setbutton [0-7] [name] - Set button name\r\n");
-    HAL_Delay(1);
-    printf("  get [param]   - Get network parameter\r\n");
-    HAL_Delay(1);
-    printf("  save          - Save settings to EEPROM\r\n");
-    HAL_Delay(1);
-    printf("  load          - Load settings from EEPROM\r\n");
-    HAL_Delay(1);
-    printf("  set user [name] - Set HTTP username (1-31 chars)\r\n");
-    HAL_Delay(1);
-    printf("  set pass [pwd]  - Set HTTP password (<=31 chars)\r\n");
-    HAL_Delay(1);
-    printf("  get user/pass  - Get HTTP credentials\r\n");
-    HAL_Delay(1);
-    printf("  reset          - Reboot device\r\n");
-    HAL_Delay(1);
-    printf("  default       - Factory reset to defaults\r\n");
+    printf(
+        "Available commands:\r\n"
+        "  help               - Show this help\r\n"
+        "  network            - Show network configuration\r\n"
+        "  buttons            - Show button names\r\n"
+        "  set [param] [val]  - Set network parameter\r\n"
+        "  setbutton [0-7] [name] - Set button name\r\n"
+        "  get [param]        - Get network parameter\r\n"
+        "  save               - Save settings to EEPROM\r\n"
+        "  load               - Load settings from EEPROM\r\n"
+        "  set user [name]    - Set HTTP username (1-31 chars)\r\n"
+        "  set pass [pwd]     - Set HTTP password (<=31 chars)\r\n"
+        "  get user/pass      - Get HTTP credentials\r\n"
+        "  reset              - Reboot device\r\n"
+        "  default            - Factory reset to defaults\r\n"
+    );
 }
 
 
@@ -829,12 +840,14 @@ void ProcessGetCommand(char* args)
 
 void TrimWhitespace(char* str)
 {
-    char* end;
-    while(isspace((unsigned char)*str)) str++;
-    if(*str == 0) return;
-    end = str + strlen(str) - 1;
-    while(end > str && isspace((unsigned char)*end)) end--;
-    *(end + 1) = 0;
+    // Trim trailing whitespace
+    size_t len = strlen(str);
+    while (len > 0 && isspace((unsigned char)str[len - 1])) len--;
+    str[len] = '\0';
+    // Trim leading whitespace in-place
+    size_t start = 0;
+    while (str[start] && isspace((unsigned char)str[start])) start++;
+    if (start > 0) memmove(str, str + start, len - start + 1);
 }
 
 void ToLowerCase(char* str)
@@ -935,8 +948,8 @@ uint16_t USB_ReadData(uint8_t* buffer, uint16_t max_len)
 void ProcessUSBData(void)
 {
   if(usb_rx_ready) {
-    uint8_t buffer[USB_RX_BUFFER_SIZE];
-    uint16_t length = USB_ReadData(buffer, sizeof(buffer));
+    uint8_t buffer[USB_RX_BUFFER_SIZE + 1];
+    uint16_t length = USB_ReadData(buffer, USB_RX_BUFFER_SIZE);
 
     if(length > 0) {
       buffer[length] = '\0';
@@ -970,9 +983,7 @@ void ShowButtonNames(void)
 {
     printf("=== Button Names ===\r\n");
     for(int i = 0; i < 8; i++) {
-    	HAL_Delay(1);
         printf("Button %d: %s\r\n", i, button_names[i]);
-        HAL_Delay(1);
     }
 }
 
@@ -1055,17 +1066,7 @@ void ensure_socket_closed(uint8_t sock) {
     }
 }
 
-void EnsureSocketClosedIfNeeded() {
-    uint8_t status = getSn_SR(HTTP_SOCKET);
-    if (status == SOCK_ESTABLISHED || status == SOCK_CLOSE_WAIT) {
-        uint32_t now = HAL_GetTick();
-        if (socket_active_since != 0 && (now - socket_active_since > 10000)) {
-            printf("Socket stuck >10 seconds, force closing socket %d\r\n", HTTP_SOCKET);
-            ensure_socket_closed(HTTP_SOCKET);
-            socket_active_since = 0;
-        }
-    }
-}
+
 
 void ResetW5500(void) {
     HAL_GPIO_WritePin(SPI1_RST_GPIO_Port, SPI1_RST_Pin, GPIO_PIN_RESET);
@@ -1090,17 +1091,21 @@ void ResetW5500(void) {
 
 void CheckW5500(void) {
     static uint32_t last_w5500_check = 0;
+    static uint8_t w5500_missing = 0;
     uint32_t now = HAL_GetTick();
     if (now - last_w5500_check < 10000) {
         return;
     }
     uint8_t ver = getVERSIONR();
     if (ver != 0x04) {
-        printf("W5500 dead (ver=0x%02X), resetting...\r\n", ver);
-        ResetW5500();
+        if (!w5500_missing) {
+            printf("W5500 not responding (ver=0x%02X). Skipping W5500 checks.\r\n", ver);
+            w5500_missing = 1;
+        }
         last_w5500_check = now;
         return;
     }
+    w5500_missing = 0;
     uint8_t status = getSn_SR(HTTP_SOCKET);
     switch (status) {
         case SOCK_LISTEN:
@@ -1110,8 +1115,8 @@ void CheckW5500(void) {
 
         case SOCK_ESTABLISHED:
         case SOCK_CLOSE_WAIT:
-            if (socket_active_since != 0 && (now - socket_active_since > 15000)) {
-                printf("HTTP socket stuck >15s (state=%d), forcing close...\r\n", status);
+            if (socket_active_since != 0 && (now - socket_active_since > 10000)) {
+                printf("HTTP socket stuck >10s (state=%d), forcing close...\r\n", status);
                 ensure_socket_closed(HTTP_SOCKET);
                 socket_active_since = 0;
 
@@ -1221,6 +1226,8 @@ int main(void)
   printf("System initialized\r\n");
 
   // Сброс и инициализация W5500
+  // CS должен быть HIGH (неактивен) перед выходом W5500 из сброса
+  HAL_GPIO_WritePin(SPI1_CS_GPIO_Port,  SPI1_CS_Pin,  GPIO_PIN_SET);  // CS = deasserted
   HAL_GPIO_WritePin(SPI1_RST_GPIO_Port, SPI1_RST_Pin, GPIO_PIN_RESET);
   HAL_Delay(10);
   HAL_GPIO_WritePin(SPI1_RST_GPIO_Port, SPI1_RST_Pin, GPIO_PIN_SET);
@@ -1234,20 +1241,26 @@ int main(void)
   wizchip_init(rx_tx_buff_sizes, rx_tx_buff_sizes);
   wizchip_setnetinfo(&gWIZNETINFO);
 
+  uint8_t w5500_ver = getVERSIONR();
+  printf("W5500 version: 0x%02X (expected 0x04)\r\n", w5500_ver);
   printf("W5500 initialized, IP: %d.%d.%d.%d\r\n", gWIZNETINFO.ip[0],
           gWIZNETINFO.ip[1], gWIZNETINFO.ip[2], gWIZNETINFO.ip[3]);
 
-  if (socket(HTTP_SOCKET, Sn_MR_TCP, 80, 0) != HTTP_SOCKET) {
-      printf("Socket creation failed!\r\n");
-      while (1) { HAL_Delay(1000); }
+  if (w5500_ver == 0x04) {
+      if (socket(HTTP_SOCKET, Sn_MR_TCP, HTTP_PORT, 0) == HTTP_SOCKET) {
+          if (listen(HTTP_SOCKET) == SOCK_OK) {
+              printf("HTTP Server listening on port %d...\r\n", HTTP_PORT);
+          } else {
+              printf("Listen failed! Will retry in main loop.\r\n");
+              close(HTTP_SOCKET);
+          }
+      } else {
+          printf("Socket creation failed! Will retry in main loop.\r\n");
+      }
+  } else {
+      printf("W5500 not detected (ver=0x%02X). Skipping HTTP server.\r\n", w5500_ver);
+      printf("You can still configure settings via USB COM port.\r\n");
   }
-
-  if (listen(HTTP_SOCKET) != SOCK_OK) {
-      printf("Listen failed!\r\n");
-      while (1) { HAL_Delay(1000); }
-  }
-
-  printf("HTTP Server listening on port 80...\r\n");
 
   /* USER CODE END 2 */
 
@@ -1257,19 +1270,9 @@ int main(void)
   {
     ProcessUSBData();
     CheckW5500();
-    EnsureSocketClosedIfNeeded();
 
     uint8_t status = getSn_SR(HTTP_SOCKET);
     uint32_t now = HAL_GetTick();
-
-    // Контроль "зависшего" сокета
-    if ((status == SOCK_ESTABLISHED || status == SOCK_CLOSE_WAIT) && socket_active_since != 0) {
-        if (now - socket_active_since > 10000) {
-            printf("Socket stuck >10s, force closing socket %d\r\n", HTTP_SOCKET);
-            close(HTTP_SOCKET);
-            socket_active_since = 0;
-        }
-    }
 
     switch (status) {
     case SOCK_ESTABLISHED: {
@@ -1307,6 +1310,8 @@ int main(void)
         if (total_len > 0) {
             http_request[total_len] = '\0';
 
+            uint8_t serve_page = 1;
+
             // === ПРОВЕРКА АУТЕНТИФИКАЦИИ ===
 #ifdef AUTH_ON
             if (strstr((char*) http_request, "GET /favicon.ico") == NULL) {
@@ -1319,10 +1324,11 @@ int main(void)
                         }
                         HAL_Delay(1);
                     }
-                    goto skip_page_serve_and_close;
+                    serve_page = 0;
                 }
             }
 #endif
+            if (serve_page) {
 
             // === ОБРАБОТКА СМЕНЫ РЕЖИМОВ ===
             if (strstr((char*) http_request, "GET /mode/toggle")) {
@@ -1435,7 +1441,7 @@ int main(void)
             send_web_page(HTTP_SOCKET, main_page, gpio_states, button_names,
                           operation_mode, dual_mode_group1, dual_mode_group2);
 
-            ensure_socket_closed(HTTP_SOCKET);
+            //ensure_socket_closed(HTTP_SOCKET);
             uint32_t start = HAL_GetTick();
             while (getSn_TX_RD(HTTP_SOCKET) != getSn_TX_WR(HTTP_SOCKET)) {
                 if (HAL_GetTick() - start > 1000 || getSn_SR(HTTP_SOCKET) != SOCK_ESTABLISHED) {
@@ -1443,7 +1449,8 @@ int main(void)
                 }
                 HAL_Delay(1);
             }
-        }
+            } // end if (serve_page)
+        } // end if (total_len > 0)
 
         disconnect(HTTP_SOCKET);
         socket_active_since = 0;
@@ -1456,7 +1463,6 @@ int main(void)
             }
             HAL_Delay(1);
         }
-        skip_page_serve_and_close:
         break;
     }
 
@@ -1468,7 +1474,7 @@ int main(void)
     case SOCK_CLOSED:
         close(HTTP_SOCKET);
         HAL_Delay(1);
-        if (socket(HTTP_SOCKET, Sn_MR_TCP, 80, 0) == HTTP_SOCKET) {
+        if (socket(HTTP_SOCKET, Sn_MR_TCP, HTTP_PORT, 0) == HTTP_SOCKET) {
             if (listen(HTTP_SOCKET) != SOCK_OK) {
                 printf("Listen failed after socket creation!\r\n");
                 close(HTTP_SOCKET);

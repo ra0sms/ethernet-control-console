@@ -19,7 +19,7 @@
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_usb.c:1031:7:USB_ReadPacket	4
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_usb.c:1073:19:USB_EPSetStall	6
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_usb.c:1104:19:USB_EPClearStall	4
-../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_usb.c:1133:19:USB_StopDevice	3
+../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_usb.c:1133:19:USB_StopDevice	4
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_usb.c:1174:19:USB_SetDevAddress	1
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_usb.c:1189:19:USB_DevConnect	1
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_ll_usb.c:1206:19:USB_DevDisconnect	1

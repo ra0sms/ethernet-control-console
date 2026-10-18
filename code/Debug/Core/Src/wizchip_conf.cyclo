@@ -14,7 +14,7 @@
 ../Core/Src/wizchip_conf.c:251:6:reg_wizchip_spi_cbfunc	4
 ../Core/Src/wizchip_conf.c:268:6:reg_wizchip_spiburst_cbfunc	4
 ../Core/Src/wizchip_conf.c:394:6:wizchip_sw_reset	1
-../Core/Src/wizchip_conf.c:419:8:wizchip_init	11
+../Core/Src/wizchip_conf.c:419:8:wizchip_init	9
 ../Core/Src/wizchip_conf.c:501:6:wizchip_clrinterrupt	3
 ../Core/Src/wizchip_conf.c:533:11:wizchip_getinterrupt	1
 ../Core/Src/wizchip_conf.c:564:6:wizchip_setinterruptmask	1
@@ -26,7 +26,7 @@
 ../Core/Src/wizchip_conf.c:781:6:wizphy_getphyconf	4
 ../Core/Src/wizchip_conf.c:820:6:wizphy_getphystat	1
 ../Core/Src/wizchip_conf.c:827:8:wizphy_setphypmode	4
-../Core/Src/wizchip_conf.c:284:8:ctlwizchip	20
+../Core/Src/wizchip_conf.c:284:8:ctlwizchip	18
 ../Core/Src/wizchip_conf.c:853:6:wizchip_setnetinfo	1
 ../Core/Src/wizchip_conf.c:866:6:wizchip_getnetinfo	1
 ../Core/Src/wizchip_conf.c:879:8:wizchip_setnetmode	2

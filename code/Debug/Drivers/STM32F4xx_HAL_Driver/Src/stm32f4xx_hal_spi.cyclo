@@ -11,10 +11,10 @@
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_spi.c:1140:19:HAL_SPI_TransmitReceive	36
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_spi.c:940:19:HAL_SPI_Receive	19
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_spi.c:1391:19:HAL_SPI_Transmit_IT	7
-../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_spi.c:1564:19:HAL_SPI_TransmitReceive_IT	11
+../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_spi.c:1564:19:HAL_SPI_TransmitReceive_IT	12
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_spi.c:1473:19:HAL_SPI_Receive_IT	9
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_spi.c:1651:19:HAL_SPI_Transmit_DMA	8
-../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_spi.c:1865:19:HAL_SPI_TransmitReceive_DMA	13
+../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_spi.c:1865:19:HAL_SPI_TransmitReceive_DMA	14
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_spi.c:1755:19:HAL_SPI_Receive_DMA	10
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_spi.c:2008:19:HAL_SPI_Abort	16
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_spi.c:2314:19:HAL_SPI_DMAPause	2
