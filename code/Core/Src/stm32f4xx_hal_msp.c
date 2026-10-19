@@ -109,6 +109,10 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* hspi)
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /* USER CODE BEGIN SPI1_MspInit 1 */
+    /* MISO pull-down: without W5500 the line reads stable 0x00 instead of noise */
+    GPIO_InitStruct.Pin = GPIO_PIN_6;
+    GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /* USER CODE END SPI1_MspInit 1 */
 

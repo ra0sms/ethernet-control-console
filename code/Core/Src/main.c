@@ -39,6 +39,7 @@
 
 
 uint8_t stat;
+uint8_t w5500_present = 0;
 uint32_t socket_active_since = 0;
 char g_http_user[32] = "admin";
 char g_http_pass[32] = "password";
@@ -1102,10 +1103,20 @@ void CheckW5500(void) {
             printf("W5500 not responding (ver=0x%02X). Skipping W5500 checks.\r\n", ver);
             w5500_missing = 1;
         }
+        w5500_present = 0;
         last_w5500_check = now;
         return;
     }
     w5500_missing = 0;
+    if (!w5500_present) {
+        // W5500 appeared after boot or after a failure: full re-init
+        printf("W5500 detected, initializing...\r\n");
+        ResetW5500();
+        w5500_present = 1;
+        socket_active_since = 0;
+        last_w5500_check = now;
+        return;
+    }
     uint8_t status = getSn_SR(HTTP_SOCKET);
     switch (status) {
         case SOCK_LISTEN:
@@ -1218,11 +1229,7 @@ int main(void)
   ApplyNetworkSettings();
   UpdateHTTPBase64();
 
-  // Инициализация режимов работы
-  operation_mode = 0;              // 0=Toggle(global), 1=Switch(global), 2=Dual
-  dual_mode_group1 = 0;            // 0=toggle, 1=switch для GPIO 0-3 (выходы 1-4)
-  dual_mode_group2 = 0;            // 0=toggle, 1=switch для GPIO 4-7 (выходы 5-8)
-
+  // operation_mode / dual_mode_group1/2 are restored from EEPROM (or defaults)
   printf("System initialized\r\n");
 
   // Сброс и инициализация W5500
@@ -1246,7 +1253,8 @@ int main(void)
   printf("W5500 initialized, IP: %d.%d.%d.%d\r\n", gWIZNETINFO.ip[0],
           gWIZNETINFO.ip[1], gWIZNETINFO.ip[2], gWIZNETINFO.ip[3]);
 
-  if (w5500_ver == 0x04) {
+  w5500_present = (w5500_ver == 0x04);
+  if (w5500_present) {
       if (socket(HTTP_SOCKET, Sn_MR_TCP, HTTP_PORT, 0) == HTTP_SOCKET) {
           if (listen(HTTP_SOCKET) == SOCK_OK) {
               printf("HTTP Server listening on port %d...\r\n", HTTP_PORT);
@@ -1270,6 +1278,13 @@ int main(void)
   {
     ProcessUSBData();
     CheckW5500();
+
+    // Without W5500 the socket library spins forever in close()/socket() —
+    // skip all network code so USB commands keep working
+    if (!w5500_present) {
+        HAL_Delay(1);
+        continue;
+    }
 
     uint8_t status = getSn_SR(HTTP_SOCKET);
     uint32_t now = HAL_GetTick();
