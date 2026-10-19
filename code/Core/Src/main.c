@@ -302,28 +302,9 @@ void DetectResetCause(void)
     uint32_t csr = RCC->CSR;
     if      (csr & RCC_CSR_IWDGRSTF) strcpy(reset_cause, "watchdog");
     else if (csr & RCC_CSR_SFTRSTF)  strcpy(reset_cause, "software");
-    else if (csr & RCC_CSR_BORRSTF)  strcpy(reset_cause, "power on / brown-out");
+    else if (csr & RCC_CSR_PORRSTF)  strcpy(reset_cause, "power on");
     else if (csr & RCC_CSR_PINRSTF)  strcpy(reset_cause, "reset pin");
     RCC->CSR |= RCC_CSR_RMVF;
-}
-
-// Brown-out reset at 2.7 V: below it the flash wait states set for 84 MHz
-// are out of spec and the MCU may run garbage instead of resetting.
-void EnsureBORLevel(void)
-{
-    FLASH_OBProgramInitTypeDef ob = {0};
-    HAL_FLASHEx_OBGetConfig(&ob);
-    if (ob.BORLevel == OB_BOR_LEVEL3) {
-        return;
-    }
-    ob.OptionType = OPTIONBYTE_BOR;
-    ob.BORLevel = OB_BOR_LEVEL3;
-    HAL_FLASH_Unlock();
-    HAL_FLASH_OB_Unlock();
-    HAL_FLASHEx_OBProgram(&ob);
-    HAL_FLASH_OB_Launch();
-    HAL_FLASH_OB_Lock();
-    HAL_FLASH_Lock();
 }
 
 // Called from NMI when HSE fails (Clock Security System)
@@ -1282,7 +1263,6 @@ int main(void)
   LL_TIM_EnableIT_UPDATE(TIM11);
 
   DetectResetCause();
-  EnsureBORLevel();
 
   HAL_Delay(2000);
   printf("Last reset: %s\r\n", reset_cause);
