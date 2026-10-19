@@ -275,6 +275,64 @@ void W5500_WriteByte(uint8_t byte)
 
 
 
+/* ---------- Watchdog / reset handling ---------- */
+
+// IWDG: LSI ~32 kHz / 256 = 125 Hz, reload 500 -> ~4 s
+// (LSI tolerance 17..47 kHz gives 2.7..7.5 s)
+void IWDG_Start(void)
+{
+    DBGMCU->APB1FZ |= DBGMCU_APB1_FZ_DBG_IWDG_STOP; // don't reset while halted in debugger
+    IWDG->KR = 0xCCCC;          // start
+    IWDG->KR = 0x5555;          // unlock PR/RLR
+    IWDG->PR = 6;               // /256
+    IWDG->RLR = 500;
+    while (IWDG->SR) {}
+    IWDG->KR = 0xAAAA;          // reload
+}
+
+static inline void IWDG_Refresh(void)
+{
+    IWDG->KR = 0xAAAA;
+}
+
+char reset_cause[32] = "unknown";
+
+void DetectResetCause(void)
+{
+    uint32_t csr = RCC->CSR;
+    if      (csr & RCC_CSR_IWDGRSTF) strcpy(reset_cause, "watchdog");
+    else if (csr & RCC_CSR_SFTRSTF)  strcpy(reset_cause, "software");
+    else if (csr & RCC_CSR_BORRSTF)  strcpy(reset_cause, "power on / brown-out");
+    else if (csr & RCC_CSR_PINRSTF)  strcpy(reset_cause, "reset pin");
+    RCC->CSR |= RCC_CSR_RMVF;
+}
+
+// Brown-out reset at 2.7 V: below it the flash wait states set for 84 MHz
+// are out of spec and the MCU may run garbage instead of resetting.
+void EnsureBORLevel(void)
+{
+    FLASH_OBProgramInitTypeDef ob = {0};
+    HAL_FLASHEx_OBGetConfig(&ob);
+    if (ob.BORLevel == OB_BOR_LEVEL3) {
+        return;
+    }
+    ob.OptionType = OPTIONBYTE_BOR;
+    ob.BORLevel = OB_BOR_LEVEL3;
+    HAL_FLASH_Unlock();
+    HAL_FLASH_OB_Unlock();
+    HAL_FLASHEx_OBProgram(&ob);
+    HAL_FLASH_OB_Launch();
+    HAL_FLASH_OB_Lock();
+    HAL_FLASH_Lock();
+}
+
+// Called from NMI when HSE fails (Clock Security System)
+void HAL_RCC_CSSCallback(void)
+{
+    NVIC_SystemReset();
+}
+
+
 uint32_t CalculateXORChecksum(const uint8_t* data, size_t length)
 {
     uint32_t checksum = 0;
@@ -738,6 +796,7 @@ void ShowNetworkInfo(void)
            gWIZNETINFO.dhcp == NETINFO_DHCP ? "DHCP" : "Static");
 
     printf("HTTP Auth: %s / %s\r\n", g_http_user, g_http_pass);
+    printf("Last reset: %s\r\n", reset_cause);
 }
 
 void ProcessSetCommand(char* args)
@@ -1083,7 +1142,7 @@ void ResetW5500(void) {
     wizchip_setnetinfo(&gWIZNETINFO);
 
     ensure_socket_closed(HTTP_SOCKET);
-    if (socket(HTTP_SOCKET, Sn_MR_TCP, HTTP_PORT, 0) == HTTP_SOCKET) {
+    if (socket(HTTP_SOCKET, Sn_MR_TCP, HTTP_PORT, SF_IO_NONBLOCK) == HTTP_SOCKET) {
         listen(HTTP_SOCKET);
     }
     printf("W5500 fully reset and reinitialized.\r\n");
@@ -1132,7 +1191,7 @@ void CheckW5500(void) {
                 socket_active_since = 0;
 
                 HAL_Delay(10);
-                if (socket(HTTP_SOCKET, Sn_MR_TCP, HTTP_PORT, 0) != HTTP_SOCKET) {
+                if (socket(HTTP_SOCKET, Sn_MR_TCP, HTTP_PORT, SF_IO_NONBLOCK) != HTTP_SOCKET) {
                     printf("Reopen socket failed!\r\n");
                 } else if (listen(HTTP_SOCKET) != SOCK_OK) {
                     printf("Re-listen failed!\r\n");
@@ -1149,7 +1208,7 @@ void CheckW5500(void) {
             socket_active_since = 0;
             close(HTTP_SOCKET);
             HAL_Delay(10);
-            if (socket(HTTP_SOCKET, Sn_MR_TCP, HTTP_PORT, 0) == HTTP_SOCKET) {
+            if (socket(HTTP_SOCKET, Sn_MR_TCP, HTTP_PORT, SF_IO_NONBLOCK) == HTTP_SOCKET) {
                 if (listen(HTTP_SOCKET) != SOCK_OK) {
                     printf("Listen failed after recovery!\r\n");
                     close(HTTP_SOCKET);
@@ -1222,7 +1281,11 @@ int main(void)
   LL_TIM_EnableCounter(TIM11);
   LL_TIM_EnableIT_UPDATE(TIM11);
 
+  DetectResetCause();
+  EnsureBORLevel();
+
   HAL_Delay(2000);
+  printf("Last reset: %s\r\n", reset_cause);
 
   // Загрузка настроек из EEPROM или дефолтных
   if (!ReadSettingsFromEEPROM()) {
@@ -1260,7 +1323,7 @@ int main(void)
 
   w5500_present = (w5500_ver == 0x04);
   if (w5500_present) {
-      if (socket(HTTP_SOCKET, Sn_MR_TCP, HTTP_PORT, 0) == HTTP_SOCKET) {
+      if (socket(HTTP_SOCKET, Sn_MR_TCP, HTTP_PORT, SF_IO_NONBLOCK) == HTTP_SOCKET) {
           if (listen(HTTP_SOCKET) == SOCK_OK) {
               printf("HTTP Server listening on port %d...\r\n", HTTP_PORT);
           } else {
@@ -1275,12 +1338,15 @@ int main(void)
       printf("You can still configure settings via USB COM port.\r\n");
   }
 
+  // Any hang longer than ~4 s (stuck SPI/W5500 wait, HardFault) -> reboot
+  IWDG_Start();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    IWDG_Refresh();
     ProcessUSBData();
     CheckW5500();
 
@@ -1304,14 +1370,16 @@ int main(void)
         uint16_t total_len = 0;
         uint32_t recv_start = HAL_GetTick();
 
-        // Приём HTTP-запроса
+        // Приём HTTP-запроса. Сокет неблокирующий: recv() возвращает 0 (SOCK_BUSY),
+        // пока данных нет. Общий лимит 3 с — клиент, открывший соединение и молчащий
+        // (preconnect браузера, уснувший телефон), больше не блокирует устройство.
         while (total_len < sizeof(http_request) - 1) {
+            IWDG_Refresh();
             int16_t len = recv(HTTP_SOCKET, http_request + total_len,
                     sizeof(http_request) - total_len - 1);
 
             if (len > 0) {
                 total_len += len;
-                recv_start = HAL_GetTick();
                 if (total_len >= 4 && memcmp(http_request + total_len - 4, "\r\n\r\n", 4) == 0) {
                     break;
                 }
@@ -1338,7 +1406,7 @@ int main(void)
                 if (!check_authentication(http_request)) {
                     send_auth_required(HTTP_SOCKET);
                     uint32_t start = HAL_GetTick();
-                    while (getSn_TX_RD(HTTP_SOCKET) != getSn_TX_WR(HTTP_SOCKET)) {
+                    while (getSn_TX_RD(HTTP_SOCKET) != getSn_TX_WR(HTTP_SOCKET)) { IWDG_Refresh();
                         if (HAL_GetTick() - start > 500 || getSn_SR(HTTP_SOCKET) != SOCK_ESTABLISHED) {
                             break;
                         }
@@ -1463,7 +1531,7 @@ int main(void)
 
             //ensure_socket_closed(HTTP_SOCKET);
             uint32_t start = HAL_GetTick();
-            while (getSn_TX_RD(HTTP_SOCKET) != getSn_TX_WR(HTTP_SOCKET)) {
+            while (getSn_TX_RD(HTTP_SOCKET) != getSn_TX_WR(HTTP_SOCKET)) { IWDG_Refresh();
                 if (HAL_GetTick() - start > 1000 || getSn_SR(HTTP_SOCKET) != SOCK_ESTABLISHED) {
                     break;
                 }
@@ -1475,7 +1543,7 @@ int main(void)
         disconnect(HTTP_SOCKET);
         socket_active_since = 0;
         uint32_t close_start = HAL_GetTick();
-        while (getSn_SR(HTTP_SOCKET) != SOCK_CLOSED) {
+        while (getSn_SR(HTTP_SOCKET) != SOCK_CLOSED) { IWDG_Refresh();
             if (HAL_GetTick() - close_start > 1000) {
                 printf("Force close after disconnect timeout\r\n");
                 close(HTTP_SOCKET);
@@ -1494,7 +1562,7 @@ int main(void)
     case SOCK_CLOSED:
         close(HTTP_SOCKET);
         HAL_Delay(1);
-        if (socket(HTTP_SOCKET, Sn_MR_TCP, HTTP_PORT, 0) == HTTP_SOCKET) {
+        if (socket(HTTP_SOCKET, Sn_MR_TCP, HTTP_PORT, SF_IO_NONBLOCK) == HTTP_SOCKET) {
             if (listen(HTTP_SOCKET) != SOCK_OK) {
                 printf("Listen failed after socket creation!\r\n");
                 close(HTTP_SOCKET);
@@ -1728,10 +1796,8 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
-  __disable_irq();
-  while (1)
-  {
-  }
+  // May run before the watchdog is started (e.g. HSE failed to start): reboot
+  NVIC_SystemReset();
   /* USER CODE END Error_Handler_Debug */
 }
 

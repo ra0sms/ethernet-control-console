@@ -74,9 +74,8 @@ void NMI_Handler(void)
   /* USER CODE END NonMaskableInt_IRQn 0 */
   HAL_RCC_NMI_IRQHandler();
   /* USER CODE BEGIN NonMaskableInt_IRQn 1 */
-   while (1)
-  {
-  }
+  // CSS (HSE failure) is handled in HAL_RCC_CSSCallback() -> reset.
+  // No endless loop here: it would hang the device forever.
   /* USER CODE END NonMaskableInt_IRQn 1 */
 }
 
