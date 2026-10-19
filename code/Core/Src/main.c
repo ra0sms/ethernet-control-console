@@ -1201,7 +1201,12 @@ static void MX_TIM11_Init(void);
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-
+  // Drive outputs PB0-PB7 low as early as possible: after reset they are
+  // floating inputs until MX_GPIO_Init(), which runs only after the clock setup
+  RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
+  (void)RCC->AHB1ENR;
+  GPIOB->BSRR = 0x00FFU << 16;
+  GPIOB->MODER = (GPIOB->MODER & ~0xFFFFU) | 0x5555U;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
